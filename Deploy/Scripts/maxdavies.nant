@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<project name="zuken-redesign.codehousegroup.com.nant" default="default" basedir=".">
+  <description>Build, unit test, and deploy Code and Sitecre changes of the Zuken Redesign Project to UK-App1.</description>
+
+  <!-- Default build target.-->
+  <!--<target name="default" depends="sitecore-deploy smart-publish">-->
+  <target name="default" depends="sitecore-deploy">
+    <echo>zuken-redesign.codehousegroup.com.nant done. Updating commit log.</echo>
+    <gitlogger lastest-hash="${build.vcs.number}"/>
+  </target>
+
+  <!--<target name="sitecore-deploy" depends="tds-deploy-master"/>-->
+  <target name="sitecore-deploy" depends="filecopy"/>
+
+
+  
+  <!-- Takes the current TDS change sets and loads them to Sitecore -->
+  <target name="tds-deploy-master" depends="filecopy hedgehog">
+    <echo>Trying to calculate refspec for HEAD for Master</echo>
+    <property name="headspec" value="${build.vcs.number}"/>
+    <echo>Calculated ${headspec} as the most recent commit.</echo>
+    <tdsDeploy repo="Codehouse/Zuken"
+               tdsRefSpec="src/Zuken.Master/"
+               firstCommit="${commits::last-successful-commit()}"
+               lastCommit="${headspec}"
+               tdsUrl="http://zuken-redesign.codehousegroup.com/_DEV/TdsService.asmx"
+               sitecoreDb="master"
+               tdsAccessGuid="05a6323d-43fa-4d1a-a48a-16d8e3360c34" verbose="true" />
+    <echo>Everthing looks good for master.</echo>
+  </target>
+
+   <!--get the files over onto the deployment server--> 
+  <target name="filecopy" depends="license build">
+    <echo>Attempting Deploy to UK-App1</echo>
+    <copy todir="\\uk-app1\WebApplications\zuken-redesign.codehousegroup.com\website" overwrite="true" verbose="false">
+        <fileset basedir="..\..\src\Website">
+            <include name="**/*" />
+        <exclude name="**/*.cs" />
+        <exclude name="HTML/**" />
+        <exclude name="**/Thumbs.db" />
+        <exclude name="**/Microsoft.SqlServer.BatchParser.dll" />
+      </fileset>
+    </copy>
+    <echo>Finished Deploying.</echo>
+  </target>
+
+    <!--Copy the Codehouse License file to the remote location.-->
+    <target name="license">
+        this can be upgraded to find the most recent file
+        <if test="${file::exists('\\uk-app1\WebApplications\zuken-redesign.codehousegroup.com\Data\license.xml')}">
+            <echo>Codehouse License has already been deployed.</echo>
+        </if>
+        <if test="${not file::exists('\\uk-app1\WebApplications\zuken-redesign.codehousegroup.com\Data\license.xml')}">
+            <echo>Codehouse License has not been deployed. I can fix that for you...</echo>
+            <if test="${not file::exists('\\uk-fp1\Software\Sitecore\Codehouse Licence File - DO NOT DISTRIBUTE\Latest\license.xml')}">
+                <echo>The Codehouse License I think I should use is missing. This isn't going to work.</echo>
+            </if>
+            if the license is changed, this will need to be updated!
+            <echo>Using July 2013 License file...</echo>
+            <copy todir="\\uk-app1\WebApplications\zuken-redesign.codehousegroup.com\Data" overwrite="true" verbose="false">
+                <fileset basedir="\\uk-fp1\Software\Sitecore\Codehouse Licence File - DO NOT DISTRIBUTE\Latest">
+                    <include name="license.xml" />
+                </fileset>
+            </copy>
+        </if>
+    </target>
+
+
+    <!--builds the solution based on the sln build file from Visual Studio.-->
+    <target name="build" depends="environment">
+        <echo>Attempting Build</echo>
+        <exec program="C:\Windows\Microsoft.NET\Framework64\v4.0.30319\msbuild.exe" workingdir="..\..\src\website">
+            <arg value="zuken.sln" />
+            <arg value="/t:Rebuild" />
+            <arg value="/p:Configuration=UAT" />
+            <arg value="/clp:ErrorsOnly" />
+        </exec>
+
+        
+        <echo>Attempting to transform web.config</echo>
+        <exec program="C:\Windows\Microsoft.NET\Framework64\v4.0.30319\msbuild.exe" workingdir="..\..\src\website">
+            <arg value="zuken.csproj" />
+            <arg value="/m" />
+            <arg value="/t:TransformWebConfig" />
+            <arg value="/p:Configuration=UAT" />
+            <arg value="/clp:ErrorsOnly" />
+        </exec>
+
+        <echo>Copying transformed web.config</echo>
+        <copy file="..\..\src\Website\obj\UAT\TransformWebConfig\transformed\Web.config" tofile="..\..\src\Website\Web.config" overwrite="true"/>
+
+        <echo>Build Complete</echo>
+    </target>
+
+    <!--Makes some environmental changes so ecore builds nicely - typically the DB conenction strings...-->
+    <target name="environment">
+        <echo>Copying UAT Specific Connection Strings into place.</echo>
+        <copy file="..\..\src\Website\App_Config\ConnectionStrings.UAT.config" tofile="..\..\src\Website\App_Config\ConnectionStrings.config" overwrite="true"/>
+
+        <echo>Forcibly loading Custom Functions</echo>
+        <loadtasks assembly="C:\Nant\0.91\bin\Codehouse.BuildAutomation.GitCommitLogger.Tasks.dll" />
+    </target>
+
+    <target name="hedgehog">
+        <echo>Installing Hedgehog DLL</echo>
+        <copy file="..\..\src\Dependencies\Hedgehog\HedgehogDevelopment.SitecoreProject.Service.dll" tofile="\\uk-app1\WebApplications\zuken-redesign.codehousegroup.com\website\bin\HedgehogDevelopment.SitecoreProject.Service.dll"/>
+        <echo>Installing Hedgehog Connector</echo>
+        <copy todir="\\uk-app1\WebApplications\zuken-redesign.codehousegroup.com\website\_DEV" overwrite="true" verbose="false">
+            <fileset basedir="..\..\src\Dependencies\Hedgehog\_DEV">
+                <include name="**/*" />
+            </fileset>
+        </copy>
+    </target>
+
+    <!--makes sure that the codehouse web services utilities are installed into the site.--> 
+  <target name="codehouse-sitecore-service">
+    <echo>Checking installation of Sitecore Automation Services...</echo>
+    <if test="${not file::exists('\\uk-app1\WebApplications\zuken-redesign.codehousegroup.com\website\_CH\PublishingService.svc')}">
+       <!--X:\Continuous Integration Utilities\SitecoreUtil.Service\--> 
+      <echo>Installing Codehouse Publishing Services</echo>
+      <copy todir="\\uk-app1\WebApplications\zuken-redesign.codehousegroup.com\website\" overwrite="true" verbose="false">
+        <fileset basedir="\\uk-fp1\Software\Continuous Integration Utilities\SitecoreUtil.Service\">
+          <include name="**/*" />
+        </fileset>
+      </copy>
+
+    </if>
+  </target>
+  
+   <!--causes Sitecore to do a Smart Publish on the given site, to update any changes.--> 
+  <target name="smart-publish" depends="codehouse-sitecore-service">
+    <echo>Instigating a Series of Publishes on Sitecore....</echo>
+    <sitecorePublish endpointName="SitecoreServiceUtilBinding" remoteAddress="http://zuken-redesign.codehousegroup.com/_CH/PublishingService.svc" smartPublish="false" publishOrigin="/sitecore/templates/Zuken"/>
+    <sitecorePublish endpointName="SitecoreServiceUtilBinding" remoteAddress="http://zuken-redesign.codehousegroup.com/_CH/PublishingService.svc" smartPublish="false" publishOrigin="/sitecore/layout"/>
+    <sitecorePublish endpointName="SitecoreServiceUtilBinding" remoteAddress="http://zuken-redesign.codehousegroup.com/_CH/PublishingService.svc" smartPublish="true"/>
+  </target>
+  
+</project>
